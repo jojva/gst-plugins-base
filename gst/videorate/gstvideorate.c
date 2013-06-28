@@ -1005,6 +1005,15 @@ gst_video_rate_transform_ip (GstBaseTransform * trans, GstBuffer * buffer)
   avg_period = videorate->average_period_set;
   GST_OBJECT_UNLOCK (videorate);
 
+  // Remember the first time and corresponding offset
+  if (!GST_CLOCK_TIME_IS_VALID (videorate->next_ts)) {
+    GstClockTime timestamp;
+    timestamp = GST_BUFFER_TIMESTAMP (buffer);
+    videorate->next_ts = timestamp / videorate->rate;
+  }
+
+  gst_object_sync_values (GST_OBJECT (videorate), videorate->next_ts);
+
   /* MT-safe switching between modes */
   if (G_UNLIKELY (avg_period != videorate->average_period)) {
     gboolean switch_mode = (avg_period == 0 || videorate->average_period == 0);
