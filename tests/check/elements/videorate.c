@@ -1036,6 +1036,105 @@ GST_START_TEST (test_caps_negotiation)
 
 GST_END_TEST;
 
+static GstPadProbeReturn
+listen_outbuffer_ts (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+{
+  GstBuffer *buffer;
+  guint64 buf_ts;
+  guint64 *expected_ts = (guint64 *) user_data;
+
+  buffer = GST_PAD_PROBE_INFO_BUFFER (info);
+  buf_ts = GST_BUFFER_TIMESTAMP (buffer);
+
+  GST_DEBUG ("Probed 1 outbuf. ts : %" GST_TIME_FORMAT
+      ", expected : %" GST_TIME_FORMAT,
+      GST_TIME_ARGS (buf_ts), GST_TIME_ARGS (*expected_ts));
+  fail_unless_equals_uint64 (buf_ts, *expected_ts);
+
+  /* Next expected timestamp with fps 25/1 */
+  *expected_ts += 40000000;
+
+  return GST_PAD_PROBE_OK;
+}
+
+GST_START_TEST (test_rate)
+{
+  GstElement *videorate;
+  GstClockTime ts;
+  GstBuffer *buf;
+  GstCaps *caps;
+  gulong probe;
+  guint64 expected_ts = 0;
+
+  videorate = setup_videorate ();
+  fail_unless (gst_element_set_state (videorate,
+          GST_STATE_PLAYING) == GST_STATE_CHANGE_SUCCESS,
+      "could not set to playing");
+  probe = gst_pad_add_probe (mysinkpad, GST_PAD_PROBE_TYPE_BUFFER,
+      (GstPadProbeCallback) listen_outbuffer_ts, &expected_ts, NULL);
+
+  buf = gst_buffer_new_and_alloc (4);
+  gst_buffer_memset (buf, 0, 0, 4);
+  caps = gst_caps_from_string (VIDEO_CAPS_STRING);
+  gst_check_setup_events (mysrcpad, videorate, caps, GST_FORMAT_TIME);
+  gst_caps_unref (caps);
+  ASSERT_BUFFER_REFCOUNT (buf, "inbuffer", 1);
+
+  /* Setting rate to 0.5 */
+  g_object_set (videorate, "rate", 0.5, NULL);
+
+  /* Push 0.5sec of buffers, output expected 1sec with rate 0.5  */
+  for (ts = 0; ts < 0.5 * GST_SECOND; ts += GST_SECOND / 33) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+
+  fail_unless_equals_int (g_list_length (buffers), 24);
+  assert_videorate_stats (videorate, "rate 0.5", 17, 24, 0, 8);
+
+  /* Setting rate to 1.0 */
+  g_object_set (videorate, "rate", 1.0, NULL);
+
+  /* Push 1sec of buffers, output expected 1sec with rate 1.0 */
+  for (; ts < 1.5 * GST_SECOND; ts += GST_SECOND / 33) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+
+  fail_unless_equals_int (g_list_length (buffers), 50);
+  assert_videorate_stats (videorate, "rate 1.0", 50, 50, 8, 9);
+
+  /* Setting rate to 2.0 */
+  g_object_set (videorate, "rate", 2.0, NULL);
+
+  /* Push 2sec of buffers, output expected 1sec with rate 2.0 */
+  for (; ts < 3.5 * GST_SECOND; ts += GST_SECOND / 33) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+
+  fail_unless_equals_int (g_list_length (buffers), 76);
+  assert_videorate_stats (videorate, "rate 2.0", 116, 76, 48, 9);
+
+  /* cleanup */
+  gst_pad_remove_probe (mysinkpad, probe);
+  cleanup_videorate (videorate);
+}
+
+GST_END_TEST;
+
 static Suite *
 videorate_suite (void)
 {
@@ -1054,6 +1153,7 @@ videorate_suite (void)
   tcase_add_test (tc_chain, test_selected_caps);
   tcase_add_loop_test (tc_chain, test_caps_negotiation,
       0, G_N_ELEMENTS (caps_negotiation_tests));
+  tcase_add_test (tc_chain, test_rate);
 
   return s;
 }
