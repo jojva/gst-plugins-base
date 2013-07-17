@@ -1188,6 +1188,71 @@ GST_START_TEST (test_query_duration)
 
 GST_END_TEST;
 
+GST_START_TEST (test_query_position)
+{
+  GstElement *videorate;
+  GstClockTime ts;
+  GstBuffer *buf;
+  GstCaps *caps;
+  gint64 position;
+
+  videorate = setup_videorate ();
+  fail_unless (gst_element_set_state (videorate,
+          GST_STATE_PLAYING) == GST_STATE_CHANGE_SUCCESS,
+      "could not set to playing");
+
+  buf = gst_buffer_new_and_alloc (4);
+  gst_buffer_memset (buf, 0, 0, 4);
+  caps = gst_caps_from_string (VIDEO_CAPS_STRING);
+  gst_check_setup_events (mysrcpad, videorate, caps, GST_FORMAT_TIME);
+  gst_caps_unref (caps);
+  ASSERT_BUFFER_REFCOUNT (buf, "inbuffer", 1);
+
+  /* Push a few buffers */
+  g_object_set (videorate, "rate", 2.0, NULL);
+  for (ts = 0; ts < 0.5 * GST_SECOND; ts += GST_SECOND / 20) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+  g_object_set (videorate, "rate", 0.8, NULL);
+  for (; ts < GST_SECOND; ts += GST_SECOND / 20) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    if (ts == 0.75 * GST_SECOND) {
+      gst_element_query_position (videorate, GST_FORMAT_TIME, &position);
+      fail_unless_equals_uint64 (position, 0.48 * GST_SECOND);
+    }
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+  g_object_set (videorate, "rate", 1.7, NULL);
+  for (; ts < 1.5 * GST_SECOND; ts += GST_SECOND / 20) {
+    GstBuffer *inbuf;
+
+    inbuf = gst_buffer_copy (buf);
+    GST_BUFFER_TIMESTAMP (inbuf) = ts;
+
+    if (ts == 1.2 * GST_SECOND) {
+      gst_element_query_position (videorate, GST_FORMAT_TIME, &position);
+      fail_unless_equals_uint64 (position, 0.96 * GST_SECOND);
+    }
+
+    fail_unless_equals_int (gst_pad_push (mysrcpad, inbuf), GST_FLOW_OK);
+  }
+
+  /* cleanup */
+  cleanup_videorate (videorate);
+}
+
+GST_END_TEST;
+
 static Suite *
 videorate_suite (void)
 {
@@ -1208,6 +1273,7 @@ videorate_suite (void)
       0, G_N_ELEMENTS (caps_negotiation_tests));
   tcase_add_test (tc_chain, test_rate);
   tcase_add_test (tc_chain, test_query_duration);
+  tcase_add_test (tc_chain, test_query_position);
 
   return s;
 }
